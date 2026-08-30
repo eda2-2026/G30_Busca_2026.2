@@ -7,7 +7,12 @@ from buscas import (
     busca_interpolacao,
     montar_arvore_balanceada,
     TabelaHash,
+    tamanho_recomendado_para_hash,
 )
+
+# quantas ocorrências uma busca por trecho (título/gênero) devolve no
+# máximo -- ela para de procurar assim que atingir esse número.
+LIMITE_BUSCA_POR_TRECHO = 10
 
 CAMPOS = {
     "1": {
@@ -17,6 +22,8 @@ CAMPOS = {
         "conversor": int,
         "unico": True,
         "numerico": True,
+        "modo": "igual",
+        "limite": None,
     },
     "2": {
         "id": "titulo",
@@ -25,6 +32,8 @@ CAMPOS = {
         "conversor": lambda texto: texto.casefold(),
         "unico": False,
         "numerico": False,
+        "modo": "contem",
+        "limite": LIMITE_BUSCA_POR_TRECHO,
     },
     "3": {
         "id": "ano",
@@ -33,6 +42,8 @@ CAMPOS = {
         "conversor": int,
         "unico": False,
         "numerico": True,
+        "modo": "igual",
+        "limite": None,
     },
     "4": {
         "id": "genero",
@@ -41,6 +52,8 @@ CAMPOS = {
         "conversor": lambda texto: texto.casefold(),
         "unico": False,
         "numerico": False,
+        "modo": "contem",
+        "limite": LIMITE_BUSCA_POR_TRECHO,
     },
 }
 
@@ -54,20 +67,19 @@ METODOS = {
 
 
 def campos_disponiveis(metodo_id):
-    if metodo_id == "3":
-        return {k: v for k, v in CAMPOS.items() if v["numerico"]}
     return CAMPOS
 
 
 def montar_estruturas(filmes):
     estruturas = {}
+    tamanho_hash = tamanho_recomendado_para_hash(len(filmes))
     for campo in CAMPOS.values():
         chave = campo["chave"]
         ordenados = sorted(filmes, key=chave)
 
         arvore = montar_arvore_balanceada(ordenados, chave=chave)
 
-        tabela_hash = TabelaHash(tamanho=13, chave=chave)
+        tabela_hash = TabelaHash(tamanho=tamanho_hash, chave=chave)
         for filme in filmes:
             tabela_hash.inserir(filme)
 
@@ -82,6 +94,18 @@ def montar_estruturas(filmes):
 def executar_busca(metodo_id, campo, valor, filmes, estruturas):
     chave = campo["chave"]
     dados = estruturas[campo["id"]]
+
+    if campo["modo"] == "contem":
+        limite = campo["limite"]
+        if metodo_id == "1":
+            return busca_sequencial(filmes, valor, chave=chave, modo="contem", limite=limite)
+        if metodo_id in ("2", "3"):
+            return busca_sequencial(dados["ordenados"], valor, chave=chave, modo="contem", limite=limite)
+        if metodo_id == "4":
+            return dados["arvore"].buscar_por_trecho(valor, limite=limite)
+        if metodo_id == "5":
+            return dados["hash"].buscar_por_trecho(valor, limite=limite)
+        raise ValueError(f"Método de busca desconhecido: {metodo_id}")
 
     if metodo_id == "1":
         return busca_sequencial(filmes, valor, chave=chave, chave_unica=campo["unico"])
@@ -104,8 +128,9 @@ def listar_catalogo(filmes):
 
 
 def ler_valor_busca(campo):
+    rotulo = campo["nome"] + (" (contém)" if campo["modo"] == "contem" else "")
     while True:
-        entrada = input(f"{campo['nome']} (Enter para voltar): ").strip()
+        entrada = input(f"{rotulo} (Enter para voltar): ").strip()
         if entrada == "":
             return None
         try:
@@ -114,9 +139,12 @@ def ler_valor_busca(campo):
             print("Valor inválido para este campo.\n")
 
 
+LIMITE_RESULTADOS_EXIBIDOS = 20
+
+
 def buscar_no_submenu(metodo_id, metodo_nome, campo, filmes, estruturas):
-    listar_catalogo(filmes)
-    print(f"--- {metodo_nome} | Campo: {campo['nome']} ---")
+    print(f"\n--- {metodo_nome} | Campo: {campo['nome']} ---")
+    print(f"({len(filmes)} filmes no catálogo -- use a opção 6 do menu principal pra ver a lista completa)\n")
 
     while True:
         valor = ler_valor_busca(campo)
@@ -129,11 +157,46 @@ def buscar_no_submenu(metodo_id, metodo_nome, campo, filmes, estruturas):
 
         if encontrados:
             print(f"{len(encontrados)} filme(s) encontrado(s):")
-            for filme in encontrados:
+            for filme in encontrados[:LIMITE_RESULTADOS_EXIBIDOS]:
                 print(" ", filme)
+            excedente = len(encontrados) - LIMITE_RESULTADOS_EXIBIDOS
+            if excedente > 0:
+                print(f"  ... e mais {excedente} filme(s) (não exibidos).")
         else:
             print("Nenhum filme encontrado.")
         print(f"Comparações: {comparacoes} | Tempo: {(fim - inicio) * 1000:.4f} ms\n")
+
+
+def comparar_metodos(filmes, estruturas):
+    campo = CAMPOS["1"]
+    codigos_existentes = [f.codigo for f in filmes]
+    codigo_inexistente = max(codigos_existentes) + 1
+
+    print("\n--- Comparativo de desempenho (busca por código) ---")
+    print(f"{len(codigos_existentes)} buscas bem-sucedidas (uma por filme do catálogo)\n")
+    cabecalho = (f"{'Método':<26}{'Melhor':>8}{'Pior':>8}{'Médio':>10}"
+                 f"{'Malsucedida':>13}{'Tempo total (ms)':>18}")
+    print(cabecalho)
+    print("-" * len(cabecalho))
+
+    for metodo_id, nome in METODOS.items():
+        comparacoes_lista = []
+
+        inicio = time.perf_counter()
+        for codigo in codigos_existentes:
+            _, comparacoes = executar_busca(metodo_id, campo, codigo, filmes, estruturas)
+            comparacoes_lista.append(comparacoes)
+        _, comparacoes_ausente = executar_busca(metodo_id, campo, codigo_inexistente, filmes, estruturas)
+        fim = time.perf_counter()
+
+        melhor = min(comparacoes_lista)
+        pior = max(comparacoes_lista)
+        media = sum(comparacoes_lista) / len(comparacoes_lista)
+        tempo_total_ms = (fim - inicio) * 1000
+
+        print(f"{nome:<26}{melhor:>8}{pior:>8}{media:>10.2f}"
+              f"{comparacoes_ausente:>13}{tempo_total_ms:>18.4f}")
+    print()
 
 
 def menu_campo(metodo_id, metodo_nome, filmes, estruturas):
@@ -161,11 +224,12 @@ def menu_principal():
 
     while True:
         print("=================================================")
-        print("   CATÁLOGO DE FILMES - MÉTODOS DE BUSCA (Cap. 5)")
+        print("   CATÁLOGO DE FILMES - MÉTODOS DE BUSCA         ")
         print("=================================================")
         for chave_menu, nome in METODOS.items():
             print(f"{chave_menu} - {nome}")
         print("6 - Listar catálogo")
+        print("7 - Comparar desempenho dos métodos")
         print("0 - Sair")
 
         escolha = input("Escolha uma opção: ").strip()
@@ -175,6 +239,8 @@ def menu_principal():
             break
         elif escolha == "6":
             listar_catalogo(filmes)
+        elif escolha == "7":
+            comparar_metodos(filmes, estruturas)
         elif escolha in METODOS:
             menu_campo(escolha, METODOS[escolha], filmes, estruturas)
         else:

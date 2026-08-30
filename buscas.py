@@ -1,11 +1,14 @@
-def busca_sequencial(filmes, valor, chave=lambda f: f.codigo, chave_unica=False):
+def busca_sequencial(filmes, valor, chave=lambda f: f.codigo, chave_unica=False,
+                      modo="igual", limite=None):
     comparacoes = 0
     encontrados = []
     for filme in filmes:
         comparacoes += 1
-        if chave(filme) == valor:
+        chave_filme = chave(filme)
+        bateu = chave_filme == valor if modo == "igual" else valor in chave_filme
+        if bateu:
             encontrados.append(filme)
-            if chave_unica:
+            if chave_unica or (limite is not None and len(encontrados) >= limite):
                 break
     return encontrados, comparacoes
 
@@ -126,6 +129,27 @@ class ArvoreBusca:
                 no = no.direita
         return [], comparacoes
 
+    def buscar_por_trecho(self, texto, limite=None):
+        comparacoes = 0
+        encontrados = []
+        pilha = []
+        no = self.raiz
+        while no is not None or pilha:
+            if limite is not None and len(encontrados) >= limite:
+                break
+            while no is not None:
+                pilha.append(no)
+                no = no.esquerda
+            no = pilha.pop()
+            for filme in no.filmes:
+                comparacoes += 1
+                if texto in self.chave(filme):
+                    encontrados.append(filme)
+                    if limite is not None and len(encontrados) >= limite:
+                        break
+            no = no.direita
+        return encontrados, comparacoes
+
 
 def montar_arvore_balanceada(filmes_ordenados, chave=lambda f: f.codigo):
     arvore = ArvoreBusca(chave=chave)
@@ -140,6 +164,28 @@ def montar_arvore_balanceada(filmes_ordenados, chave=lambda f: f.codigo):
 
     inserir_intervalo(0, len(filmes_ordenados) - 1)
     return arvore
+
+
+def _eh_primo(n):
+    if n < 2:
+        return False
+    if n % 2 == 0:
+        return n == 2
+    i = 3
+    while i * i <= n:
+        if n % i == 0:
+            return False
+        i += 2
+    return True
+
+
+def tamanho_recomendado_para_hash(n_elementos, fator_carga_alvo=0.7):
+    candidato = max(13, int(n_elementos / fator_carga_alvo))
+    if candidato % 2 == 0:
+        candidato += 1
+    while not _eh_primo(candidato):
+        candidato += 2
+    return candidato
 
 
 class TabelaHash:
@@ -166,4 +212,16 @@ class TabelaHash:
             comparacoes += 1
             if self.chave(filme) == valor:
                 encontrados.append(filme)
+        return encontrados, comparacoes
+
+    def buscar_por_trecho(self, texto, limite=None):
+        comparacoes = 0
+        encontrados = []
+        for bucket in self.tabela:
+            for filme in bucket:
+                comparacoes += 1
+                if texto in self.chave(filme):
+                    encontrados.append(filme)
+                    if limite is not None and len(encontrados) >= limite:
+                        return encontrados, comparacoes
         return encontrados, comparacoes
