@@ -24,7 +24,7 @@ Sistema de busca de filmes com o objetivo de encontrar por codigo, titulo, ano o
 ![comparacao](./images/image-1.png)
 
 ## Video 
-
+https://youtu.be/57ZSTD2tmjo?si=ml4F9SFMfr6jdYjC
 
 ## Instalação 
 Linguagem: Python<br>
